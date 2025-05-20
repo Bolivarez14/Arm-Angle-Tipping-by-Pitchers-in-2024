@@ -1,0 +1,99 @@
+#CODE CREATING ERIK MILLER'S ARM ANGLE AND BALL MOVEMENT CHARTS
+
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from matplotlib.patches import Circle
+import pybaseball as bb
+
+def polar_to_cartesian(radius, angle_deg):
+    """Convert polar coordinates (radius, angle) to Cartesian (x, y)."""
+    theta = np.radians(angle_deg)
+    return radius * np.cos(theta), radius * np.sin(theta)
+
+def plot_extreme_arm_slots(pid, start_dt='2024-03-01', end_dt='2024-11-01'):
+    # 1) Lookup player name
+    player = bb.playerid_reverse_lookup([pid], key_type='mlbam')
+    first_name = player.iloc[0]['name_first'].upper()
+    last_name  = player.iloc[0]['name_last'].upper()
+    print(f"Player Name: {first_name} {last_name}")
+    print(f"Player ID:   {pid}")
+
+    # 2) Fetch this pitcher's Statcast data
+    df = bb.statcast_pitcher(start_dt=start_dt, end_dt=end_dt, player_id=pid)
+    df = df.dropna(subset=['arm_angle'])
+
+    # 3) Adjust units for pfx movement
+    df['pfx_x_adj'] = df['pfx_x'] * -12
+    df['pfx_z_adj'] = df['pfx_z'] *  12
+
+    # 4) Mean arm-angle per pitch_type
+    avg = (
+        df
+        .groupby('pitch_name')['arm_angle']
+        .mean()
+        .reset_index(name='arm_angle')
+    )
+    # 5) Cartesian vectors at radius=18
+    avg[['aa_x', 'aa_z']] = avg['arm_angle'] \
+        .apply(lambda ang: pd.Series(polar_to_cartesian(18, ang)))
+
+    # 6) Identify extremes
+    hi_idx = avg['arm_angle'].idxmax()
+    lo_idx = avg['arm_angle'].idxmin()
+    extremes = avg.loc[[hi_idx, lo_idx]].reset_index(drop=True)
+
+    # Colors
+    hi_dot_color = '#8FBC8F'   # neutral green for dots
+    lo_dot_color = '#CD5C5C'   # neutral red for dots
+    hi_line_color = 'green'    # strong green for vector
+    lo_line_color = 'red'      # strong red for vector
+
+    hi_pitch = extremes.loc[0, 'pitch_name']
+    lo_pitch = extremes.loc[1, 'pitch_name']
+
+    # 7) Plot
+    fig, ax = plt.subplots(figsize=(7, 7))
+    # dots
+    df_hi = df[df['pitch_name'] == hi_pitch]
+    df_lo = df[df['pitch_name'] == lo_pitch]
+    ax.scatter(df_hi['pfx_x_adj'], df_hi['pfx_z_adj'],
+               color=hi_dot_color, alpha=0.3, label=f"{hi_pitch} dots")
+    ax.scatter(df_lo['pfx_x_adj'], df_lo['pfx_z_adj'],
+               color=lo_dot_color, alpha=0.3, label=f"{lo_pitch} dots")
+    # vectors
+    row_hi = extremes.loc[0]
+    ax.plot([0, -row_hi['aa_x']], [0, row_hi['aa_z']],
+            color=hi_line_color, lw=3,
+            label=f"{hi_pitch} vector ({row_hi['arm_angle']:.1f}°)")
+    row_lo = extremes.loc[1]
+    ax.plot([0, -row_lo['aa_x']], [0, row_lo['aa_z']],
+            color=lo_line_color, lw=3,
+            label=f"{lo_pitch} vector ({row_lo['arm_angle']:.1f}°)")
+
+    # reference circles
+    for rad, style in zip([6, 12, 18, 24], ['--', '-', '--', '-']):
+        ax.add_artist(Circle((0, 0), rad, ls=style, zorder=0, fill=False))
+    ax.add_artist(Circle((0, 0), 26, ls='-', zorder=-1,
+                         color=(228/255, 242/255, 245/255)))
+
+    # annotations & styling
+    ax.text(-25, 12, 'More Rise →', rotation=90)
+    ax.text(-25, -12, '← More Drop', rotation=90, va='top')
+    ax.text(4, -25, 'Towards 3B →')
+    ax.text(-4, -25, '← Towards 1B', ha='right')
+    ax.axhline(0, color='black', linestyle='-', zorder=1)
+    ax.axvline(0, color='black', linestyle='-', zorder=1)
+    ax.set_xlim(-28, 28)
+    ax.set_ylim(-28, 28)
+    ax.legend(bbox_to_anchor=(1.05, 1), loc=2)
+    sns.despine(ax=ax, left=True, bottom=True)
+    ax.xaxis.set_visible(False)
+    ax.yaxis.set_visible(False)
+    ax.set_aspect('equal')
+    plt.title(f"{first_name} {last_name}: 2024 Arm Angle & Movement Profile (Induced Break)")
+    plt.show()
+
+# Example usage:
+plot_extreme_arm_slots(pid=669062)
